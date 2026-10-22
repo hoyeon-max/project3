@@ -1,763 +1,757 @@
 
-import re
-from datetime import date, datetime, timedelta
-from urllib.parse import quote_plus
-from zoneinfo import ZoneInfo
-
+import streamlit as st
+import requests
 import pandas as pd
 import plotly.express as px
-import requests
-import streamlit as st
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+from urllib.parse import quote_plus
 
-# =========================================================
-# 기본 설정
-# =========================================================
+# --------------------------------------------------
+# 기본 설정: 반드시 다른 Streamlit 명령보다 먼저 실행
+# --------------------------------------------------
 st.set_page_config(
     page_title="어제의 박스오피스",
     page_icon="🎬",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-BASE = "https://www.kobis.or.kr/kobisopenapi/webservice/rest"
-SEOUL = ZoneInfo("Asia/Seoul")
+KST = ZoneInfo("Asia/Seoul")
+TODAY_KST = datetime.now(KST).date()
+YESTERDAY = TODAY_KST - timedelta(days=1)
+
+BASE_URL = "https://www.kobis.or.kr/kobisopenapi/webservice/rest"
 
 
-# =========================================================
-# 남색 시네마 테마
-# =========================================================
-st.markdown("""
-<style>
-.stApp {
-    background:
-        radial-gradient(ellipse at 12% 15%,
-            rgba(52,76,135,.24), transparent 42%),
-        radial-gradient(ellipse at 88% 82%,
-            rgba(62,46,112,.22), transparent 40%),
-        linear-gradient(135deg,#080f24 0%,#101a35 48%,#11182f 100%);
-    color: #edf2ff;
-    position: relative;
-}
-.stApp::before {
-    content: "";
-    position: fixed;
-    z-index: 0;
-    pointer-events: none;
-    width: 115vw;
-    height: 260px;
-    left: -8vw;
-    top: 24%;
-    border-top: 2px solid rgba(174,195,255,.10);
-    border-bottom: 2px solid rgba(174,195,255,.10);
-    border-radius: 48% 52% 44% 56% / 40% 60% 40% 60%;
-    transform: rotate(-12deg);
-    opacity: .58;
-    background: repeating-linear-gradient(
-        90deg,
-        transparent 0 32px,
-        rgba(190,207,255,.055) 33px 45px,
-        transparent 46px 65px
-    );
-    mask-image: linear-gradient(
-        to bottom,transparent 0%,black 18%,black 82%,transparent 100%
-    );
-}
-.stApp::after {
-    content: "";
-    position: fixed;
-    z-index: 0;
-    pointer-events: none;
-    width: 125vw;
-    height: 190px;
-    left: -12vw;
-    bottom: 7%;
-    border-top: 1px solid rgba(160,181,255,.08);
-    border-bottom: 1px solid rgba(160,181,255,.08);
-    border-radius: 55% 45% 60% 40% / 55% 40% 60% 45%;
-    transform: rotate(9deg);
-    opacity: .48;
-    background: repeating-linear-gradient(
-        90deg,
-        transparent 0 30px,
-        rgba(175,195,255,.045) 31px 43px,
-        transparent 44px 64px
-    );
-    filter: blur(1px);
-}
-[data-testid="stAppViewContainer"] > .main {
-    position: relative;
-    z-index: 1;
-}
-[data-testid="stHeader"] {
-    background: rgba(8,15,36,.72);
-}
-h1,h2,h3 {
-    color: #f3f5ff !important;
-    letter-spacing: -.5px;
-}
-p,label,.stMarkdown,[data-testid="stCaptionContainer"] {
-    color: #d4def7;
-}
-[data-testid="stMetric"] {
-    background: rgba(28,42,77,.76);
-    border: 1px solid rgba(158,181,255,.17);
-    border-radius: 16px;
-    padding: 18px 20px;
-    box-shadow: 0 8px 24px rgba(0,0,0,.12);
-    backdrop-filter: blur(8px);
-}
-[data-testid="stMetricLabel"] { color: #b9c9f4 !important; }
-[data-testid="stMetricValue"] { color: #fff !important; }
-.stButton > button,.stLinkButton > a {
-    background: rgba(39,58,105,.88);
-    color: #f4f6ff !important;
-    border: 1px solid rgba(163,187,255,.25);
-    border-radius: 10px;
-    transition: all .2s ease;
-}
-.stButton > button:hover,.stLinkButton > a:hover {
-    background: #354f8b;
-    border-color: #91adff;
-    color: #fff !important;
-    transform: translateY(-1px);
-}
-[data-baseweb="select"] > div,
-[data-testid="stDateInput"] input {
-    background: rgba(22,34,64,.94);
-    color: #fff;
-    border-color: rgba(160,181,255,.30);
-    border-radius: 10px;
-}
-[data-testid="stRadio"] label { color: #e4eaff !important; }
-[data-testid="stDataFrame"],[data-testid="stTable"] {
-    background: rgba(18,29,55,.84);
-    border: 1px solid rgba(158,181,255,.16);
-    border-radius: 12px;
-    overflow: hidden;
-}
-hr { border-color: rgba(167,187,255,.18); }
-[data-testid="stAlert"] {
-    background: rgba(30,46,82,.90);
-    border: 1px solid rgba(160,181,255,.22);
-    border-radius: 12px;
-    color: #edf2ff;
-}
-[data-testid="stPlotlyChart"] {
-    background: rgba(19,30,57,.72);
-    border: 1px solid rgba(158,181,255,.15);
-    border-radius: 16px;
-    padding: 5px;
-}
-a { color: #a9c5ff !important; }
-@media (max-width:768px) {
-    .stApp::before { height:180px; top:30%; opacity:.38; }
-    .stApp::after { height:140px; opacity:.30; }
-}
-</style>
-""", unsafe_allow_html=True)
+# --------------------------------------------------
+# 화면 스타일
+# --------------------------------------------------
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background:
+            radial-gradient(ellipse at 15% 0%, #243d68 0%, transparent 42%),
+            linear-gradient(135deg, #071326 0%, #101e38 55%, #080f20 100%);
+        color: #f4f7ff;
+    }
+
+    .block-container {
+        max-width: 1400px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+
+    h1, h2, h3, p, label {
+        color: #f4f7ff;
+    }
+
+    div[data-testid="stMetric"] {
+        background: rgba(20, 39, 69, 0.78);
+        border: 1px solid rgba(160, 190, 240, 0.18);
+        border-radius: 16px;
+        padding: 18px;
+    }
+
+    div[data-testid="stMetricLabel"] {
+        color: #bac9e6;
+    }
+
+    div[data-testid="stMetricValue"] {
+        color: #ffffff;
+    }
+
+    div.stButton > button,
+    div.stLinkButton > a {
+        background: rgba(39, 64, 103, 0.85);
+        color: #ffffff;
+        border: 1px solid rgba(160, 190, 240, 0.28);
+        border-radius: 10px;
+        min-height: 42px;
+    }
+
+    div.stButton > button:hover,
+    div.stLinkButton > a:hover {
+        border-color: #86baff;
+        color: #ffffff;
+    }
+
+    div[data-testid="stDataFrame"] {
+        border: 1px solid rgba(160, 190, 240, 0.2);
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .subtle {
+        color: #aebfdd;
+        font-size: 0.9rem;
+    }
+
+    [data-testid="stAlert"] {
+        border-radius: 12px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
-# =========================================================
-# 공통 함수
-# =========================================================
-def today_korea():
-    return datetime.now(SEOUL).date()
-
-
-def to_int(value):
+# --------------------------------------------------
+# API 설정 및 공통 요청
+# --------------------------------------------------
+def get_api_key():
     try:
-        return int(float(value or 0))
-    except (ValueError, TypeError):
-        return 0
+        key = st.secrets.get("KOBIS_KEY", "")
+    except Exception:
+        key = ""
+
+    return str(key).strip() if key else ""
 
 
-def fmt(value):
-    return f"{to_int(value):,}"
+API_KEY = get_api_key()
 
 
-def api_get(endpoint, params, key):
-    response = requests.get(
-        f"{BASE}/{endpoint}.json",
-        params={"key": key, **params},
-        timeout=20,
-    )
-    response.raise_for_status()
-    data = response.json()
+def api_get(endpoint, params, timeout=20):
+    """KOBIS JSON API를 안전하게 호출한다."""
+    if not API_KEY:
+        raise RuntimeError(
+            "API 키를 찾을 수 없습니다. "
+            "Streamlit Cloud의 Settings → Secrets에 "
+            'KOBIS_KEY = "발급받은 API 키"를 설정해 주세요.'
+        )
+
+    request_params = dict(params)
+    request_params["key"] = API_KEY
+
+    url = f"{BASE_URL}/{endpoint}.json"
+
+    try:
+        response = requests.get(
+            url,
+            params=request_params,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            "KOBIS 서버에 연결하지 못했습니다. "
+            "인터넷 연결이나 KOBIS 서버 상태를 확인해 주세요."
+        ) from exc
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            "KOBIS 응답을 JSON으로 읽을 수 없습니다. "
+            "API 키와 KOBIS 응답을 확인해 주세요."
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("KOBIS에서 예상하지 못한 응답을 받았습니다.")
 
     if "faultInfo" in data:
-        raise RuntimeError(
-            data["faultInfo"].get("message", "KOBIS API 오류")
-        )
+        fault = data.get("faultInfo", {})
+        message = fault.get("message", "KOBIS API 오류")
+        raise RuntimeError(f"KOBIS API 오류: {message}")
 
     return data
 
 
-# =========================================================
-# KOBIS API
-# =========================================================
-@st.cache_data(ttl=1800, show_spinner=False)
-def daily_boxoffice(target_dt, key):
+def safe_int(value):
+    try:
+        return int(value or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def format_number(value):
+    return f"{safe_int(value):,}"
+
+
+# --------------------------------------------------
+# 일별 박스오피스
+# --------------------------------------------------
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_daily_boxoffice(target_date):
     data = api_get(
         "boxoffice/searchDailyBoxOfficeList",
-        {"targetDt": target_dt},
-        key,
-    )
-    return data.get("boxOfficeResult", {}).get(
-        "dailyBoxOfficeList", []
+        {"targetDt": target_date.strftime("%Y%m%d")},
     )
 
+    boxoffice = data.get("boxOfficeResult", {})
+    movies = boxoffice.get("dailyBoxOfficeList", [])
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def movie_detail(movie_cd, key):
+    if not isinstance(movies, list):
+        return []
+
+    return movies
+
+
+# --------------------------------------------------
+# 영화 상세 정보
+# --------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_movie_info(movie_code):
     data = api_get(
         "movie/searchMovieInfo",
-        {"movieCd": movie_cd},
-        key,
+        {"movieCd": str(movie_code)},
     )
     return data.get("movieInfoResult", {}).get("movieInfo", {})
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def weekly_boxoffice(target_dt, key):
+# --------------------------------------------------
+# 주간 박스오피스
+# --------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_weekly_boxoffice(target_date):
     data = api_get(
         "boxoffice/searchWeeklyBoxOfficeList",
-        {"targetDt": target_dt, "weekGb": "0"},
-        key,
-    )
-    return data.get("boxOfficeResult", {}).get(
-        "weeklyBoxOfficeList", []
+        {
+            "targetDt": target_date.strftime("%Y%m%d"),
+            "weekGb": "0",
+        },
     )
 
+    boxoffice = data.get("boxOfficeResult", {})
+    movies = boxoffice.get("weeklyBoxOfficeList", [])
 
-# =========================================================
-# 관객 수 이력
-# =========================================================
-@st.cache_data(ttl=86400, show_spinner=False)
-def daily_history(movie_cd, open_date, end_date, key):
+    if not isinstance(movies, list):
+        return []
+
+    return movies
+
+
+# --------------------------------------------------
+# 관객 추이 데이터
+# --------------------------------------------------
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_daily_history(movie_code, end_date, release_date_text):
+    """최근 60일간 일별 TOP 10에서 해당 영화의 관객 수를 찾는다."""
     try:
-        release = date.fromisoformat(open_date)
-        end = date.fromisoformat(end_date)
+        release_date = datetime.strptime(
+            release_date_text, "%Y%m%d"
+        ).date()
     except (ValueError, TypeError):
-        return pd.DataFrame()
+        release_date = end_date - timedelta(days=59)
 
-    start = max(release, end - timedelta(days=59))
+    start_date = max(
+        end_date - timedelta(days=59),
+        release_date,
+    )
+
     rows = []
-    current = start
+    current = start_date
 
-    while current <= end:
+    while current <= end_date:
         try:
-            movies = daily_boxoffice(current.strftime("%Y%m%d"), key)
-            for item in movies:
-                if str(item.get("movieCd")) == str(movie_cd):
-                    rows.append({
-                        "날짜": current,
-                        "관객 수": to_int(item.get("audiCnt")),
-                        "누적 관객 수": to_int(item.get("audiAcc")),
-                    })
-                    break
+            movies = fetch_daily_boxoffice(current)
+            found = next(
+                (
+                    item for item in movies
+                    if str(item.get("movieCd", "")) == str(movie_code)
+                ),
+                None,
+            )
+
+            # TOP 10에 없는 날은 0으로 단정하지 않는다.
+            if found:
+                rows.append({
+                    "날짜": current,
+                    "관객 수": safe_int(found.get("audiCnt")),
+                })
         except Exception:
+            # 일부 날짜의 API 오류가 전체 화면을 중단시키지 않게 한다.
             pass
 
         current += timedelta(days=1)
 
-    if not rows:
-        return pd.DataFrame()
-
-    return pd.DataFrame(rows).sort_values("날짜")
+    return pd.DataFrame(rows, columns=["날짜", "관객 수"])
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def weekly_history(movie_cd, open_date, end_date, key):
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_weekly_history(movie_code, end_date, release_date_text):
+    """주간 TOP 10에서 확인 가능한 영화 관객 수를 모은다."""
     try:
-        release = date.fromisoformat(open_date)
-        end = date.fromisoformat(end_date)
+        release_date = datetime.strptime(
+            release_date_text, "%Y%m%d"
+        ).date()
     except (ValueError, TypeError):
-        return pd.DataFrame()
-
-    if release > end:
-        return pd.DataFrame()
+        release_date = end_date - timedelta(days=365)
 
     rows = []
-    seen = set()
-    current = end
+    current = end_date
+    seen_dates = set()
 
-    while current >= release:
+    # 최대 약 2년 범위에서 주간 데이터를 확인한다.
+    for _ in range(105):
+        if current < release_date:
+            break
+
         try:
-            movies = weekly_boxoffice(current.strftime("%Y%m%d"), key)
+            movies = fetch_weekly_boxoffice(current)
+            found = next(
+                (
+                    item for item in movies
+                    if str(item.get("movieCd", "")) == str(movie_code)
+                ),
+                None,
+            )
 
-            for item in movies:
-                if str(item.get("movieCd")) != str(movie_cd):
-                    continue
+            if found:
+                week_key = (
+                    found.get("showRange")
+                    or found.get("targetDt")
+                    or current.strftime("%Y%m%d")
+                )
 
-                period = str(item.get("showRange", ""))
-                identity = period or current.isoformat()
-
-                if identity in seen:
-                    continue
-
-                seen.add(identity)
-                rows.append({
-                    "날짜": current,
-                    "관객 수": to_int(item.get("audiCnt")),
-                    "누적 관객 수": to_int(item.get("audiAcc")),
-                    "상영 기간": period or current.isoformat(),
-                })
+                if week_key not in seen_dates:
+                    seen_dates.add(week_key)
+                    rows.append({
+                        "기간": str(week_key),
+                        "관객 수": safe_int(found.get("audiCnt")),
+                        "정렬 날짜": current,
+                    })
         except Exception:
             pass
 
         current -= timedelta(days=7)
 
     if not rows:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["기간", "관객 수", "정렬 날짜"])
 
-    return pd.DataFrame(rows).sort_values("날짜")
+    return (
+        pd.DataFrame(rows)
+        .sort_values("정렬 날짜")
+        .reset_index(drop=True)
+    )
 
 
 def make_monthly_history(weekly_df):
+    """확인 가능한 주간 TOP 10 데이터만 월별로 합산한다."""
     if weekly_df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=["기간", "관객 수"])
 
     df = weekly_df.copy()
-    df["월"] = pd.to_datetime(df["날짜"]).dt.to_period("M").astype(str)
+    df["월"] = pd.to_datetime(df["정렬 날짜"]).dt.to_period("M").astype(str)
 
-    monthly = df.groupby("월", as_index=False).agg({
-        "관객 수": "sum",
-        "누적 관객 수": "last",
-    })
-    monthly["날짜"] = pd.to_datetime(monthly["월"] + "-01")
-    return monthly.sort_values("날짜")
-
-
-# =========================================================
-# 그래프 스타일
-# =========================================================
-def style_line_chart(fig):
-    fig.update_traces(
-        line=dict(color="#91adff", width=3),
-        marker=dict(color="#dce5ff", size=6),
+    result = (
+        df.groupby("월", as_index=False)["관객 수"]
+        .sum()
+        .rename(columns={"월": "기간"})
     )
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(10,18,39,.20)",
-        font=dict(color="#e8edff", size=10),
-        title_font=dict(color="#fff", size=16),
-        margin=dict(l=8, r=8, t=45, b=8),
-        hovermode="x unified",
-        xaxis=dict(
-            title=None,
-            tickfont=dict(color="#c4d2f5", size=9),
-            gridcolor="rgba(180,198,255,.10)",
-        ),
-        yaxis=dict(
-            title=None,
-            tickfont=dict(color="#c4d2f5", size=9),
-            gridcolor="rgba(180,198,255,.10)",
-        ),
-        showlegend=False,
-    )
-    return fig
+
+    return result
 
 
 def make_naver_links(movie_name):
-    query = quote_plus(movie_name)
+    encoded = quote_plus(movie_name)
     poster_url = (
         "https://search.naver.com/search.naver"
-        f"?where=image&query={query}+포스터"
+        f"?where=image&query={encoded}+포스터"
     )
     synopsis_url = (
         "https://search.naver.com/search.naver"
-        f"?query={query}+줄거리+시놉시스"
+        f"?query={encoded}+줄거리+시놉시스"
     )
     return poster_url, synopsis_url
 
 
-# =========================================================
-# 박스오피스 목록
-# =========================================================
-def render_movie_list(movies, selected_date):
-    st.title("🎬 어제의 박스오피스")
-    st.caption(
-        f"{selected_date:%Y년 %m월 %d일} 기준 · "
-        "순위 또는 영화 제목을 누르면 상세 화면으로 이동합니다."
-    )
+# --------------------------------------------------
+# 상세 화면
+# --------------------------------------------------
+def show_movie_detail(movie, selected_date):
+    movie_name = str(movie.get("movieNm", "영화 정보"))
+    movie_code = str(movie.get("movieCd", ""))
+    release_date_text = str(movie.get("openDt", ""))
 
-    first = movies[0]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("🥇 1위 영화", first.get("movieNm", "-"))
-    c2.metric("1위 관객 수", f"{fmt(first.get('audiCnt'))}명")
-    c3.metric("1위 누적 관객", f"{fmt(first.get('audiAcc'))}명")
-
-    st.subheader("📊 관객 수 상위 5편")
-    chart_rows = []
-
-    for movie in movies[:5]:
-        name = str(movie.get("movieNm", "제목 미상"))
-        if to_int(movie.get("audiAcc")) > 1_000_000:
-            name = "🏆 " + name
-
-        chart_rows.append({
-            "영화명": name,
-            "관객 수": to_int(movie.get("audiCnt")),
-        })
-
-    chart_df = pd.DataFrame(chart_rows).sort_values("관객 수")
-    fig = px.bar(
-        chart_df,
-        x="관객 수",
-        y="영화명",
-        orientation="h",
-        labels={"관객 수": "관객 수(명)", "영화명": "영화"},
-    )
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(10,18,39,.20)",
-        font=dict(color="#e8edff"),
-        xaxis=dict(gridcolor="rgba(180,198,255,.10)"),
-    )
-    fig.update_traces(marker_color="#718fe0")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("🎟️ 일별 박스오피스")
-    headers = st.columns([0.8, 1.0, 3.5, 1.5, 1.5, 1.5, 1.1])
-
-    for col, label in zip(
-        headers,
-        ["순위", "변동", "영화 제목", "관객수", "누적관객", "개봉일", "스크린"],
-    ):
-        col.markdown(f"**{label}**")
-
-    st.divider()
-
-    for movie in movies:
-        rank = to_int(movie.get("rank"))
-        code = str(movie.get("movieCd", ""))
-        title = str(movie.get("movieNm", "제목 미상"))
-
-        if to_int(movie.get("audiAcc")) > 1_000_000:
-            title = "🏆 " + title
-
-        change = to_int(movie.get("rankInten"))
-        if change > 0:
-            movement = f"🔴 ▲ {change}"
-        elif change < 0:
-            movement = f"🔵 ▼ {abs(change)}"
-        else:
-            movement = "—"
-
-        cols = st.columns([0.8, 1.0, 3.5, 1.5, 1.5, 1.5, 1.1])
-
-        if cols[0].button(
-            f"{rank}위", key=f"rank_{code}", use_container_width=True
-        ):
-            st.session_state["selected_movie"] = code
-            st.session_state["selected_movie_data"] = movie
-            st.session_state["selected_movie_date"] = selected_date
-            st.rerun()
-
-        cols[1].markdown(movement)
-
-        if cols[2].button(
-            title, key=f"title_{code}", use_container_width=True
-        ):
-            st.session_state["selected_movie"] = code
-            st.session_state["selected_movie_data"] = movie
-            st.session_state["selected_movie_date"] = selected_date
-            st.rerun()
-
-        cols[3].write(fmt(movie.get("audiCnt")))
-        cols[4].write(fmt(movie.get("audiAcc")))
-        cols[5].write(movie.get("openDt") or "-")
-        cols[6].write(fmt(movie.get("scrnCnt")))
-
-
-# =========================================================
-# 영화 상세 화면
-# 포스터 자리: 왼쪽에 그래프 설정 + 그래프
-# 오른쪽에 영화 정보 + 네이버 하이퍼링크 버튼
-# =========================================================
-def render_movie_page(movie, key, selected_date):
-    movie_cd = str(movie.get("movieCd", ""))
-    movie_name = str(movie.get("movieNm", "제목 미상"))
-
-    if st.button("← 박스오피스 목록으로 돌아가기"):
-        st.session_state["selected_movie"] = None
-        st.session_state.pop("selected_movie_data", None)
+    if st.button("← 박스오피스 목록으로 돌아가기", key="back_to_list"):
+        st.session_state["page"] = "list"
         st.rerun()
 
     st.title(f"🎬 {movie_name}")
-    st.caption("영화 정보와 관객 수 추이를 확인하세요.")
-
-    try:
-        with st.spinner("영화 정보를 불러오는 중입니다..."):
-            detail = movie_detail(movie_cd, key)
-    except Exception:
-        detail = {}
+    st.caption(f"조회 기준일: {selected_date.strftime('%Y-%m-%d')}")
 
     poster_url, synopsis_url = make_naver_links(movie_name)
 
-    # 포스터 자리에는 작은 그래프, 오른쪽에는 영화 정보를 배치
-    graph_col, info_col = st.columns([1, 1.15], gap="large")
+    left, right = st.columns([1.15, 1])
 
-    with graph_col:
-        st.subheader("📈 관객 수 추이")
+    with left:
+        st.subheader("📈 관객 추이")
 
         period = st.radio(
             "그래프 기간",
             ["일간", "주간", "월간"],
             horizontal=True,
-            key=f"period_{movie_cd}",
+            key="detail_graph_period",
         )
 
-        open_date = str(movie.get("openDt", "")).strip()
-        end_date = min(selected_date, today_korea()).isoformat()
-
-        if period == "일간":
-            st.caption("최근 60일 · 일별 상위 10편 기록")
-
-            with st.spinner("일별 데이터를 조회하고 있습니다..."):
-                history = daily_history(
-                    movie_cd, open_date, end_date, key
-                )
-
-            if history.empty:
-                st.info("조회 가능한 일별 기록이 없습니다.")
-            else:
-                fig = px.line(
-                    history,
-                    x="날짜",
-                    y="관객 수",
-                    markers=True,
-                    hover_data=["누적 관객 수"],
-                    title="일별 관객 수",
-                )
-                st.plotly_chart(
-                    style_line_chart(fig),
-                    use_container_width=True,
-                )
-                with st.expander("일별 데이터 표"):
-                    st.dataframe(
-                        history,
-                        use_container_width=True,
-                        hide_index=True,
+        try:
+            if period == "일간":
+                with st.spinner("일별 관객 데이터를 불러오는 중..."):
+                    history = fetch_daily_history(
+                        movie_code, selected_date, release_date_text
                     )
 
-        else:
-            st.caption("주간 상위 10편에 포함된 기록 기준")
-
-            with st.spinner("주간 데이터를 조회하고 있습니다..."):
-                weekly = weekly_history(
-                    movie_cd, open_date, end_date, key
-                )
-
-            if weekly.empty:
-                st.info("조회 가능한 주간 기록이 없습니다.")
-
-            elif period == "주간":
-                fig = px.line(
-                    weekly,
-                    x="날짜",
-                    y="관객 수",
-                    markers=True,
-                    hover_data=["누적 관객 수", "상영 기간"],
-                    title="주간 관객 수",
-                )
-                st.plotly_chart(
-                    style_line_chart(fig),
-                    use_container_width=True,
-                )
-                with st.expander("주간 데이터 표"):
-                    st.dataframe(
-                        weekly,
-                        use_container_width=True,
-                        hide_index=True,
+                if history.empty:
+                    st.info(
+                        "최근 60일의 일별 TOP 10 자료에서 "
+                        "이 영화의 관객 추이를 찾지 못했습니다."
                     )
-
-            else:
-                monthly = make_monthly_history(weekly)
-
-                if monthly.empty:
-                    st.info("월별로 표시할 데이터가 없습니다.")
                 else:
-                    st.caption("주간 데이터의 월별 합계 · 참고용")
                     fig = px.line(
-                        monthly,
+                        history,
                         x="날짜",
                         y="관객 수",
                         markers=True,
-                        hover_data=["누적 관객 수"],
-                        title="월별 관객 수 참고 추이",
+                        title="일별 관객 수 (최근 60일)",
                     )
-                    st.plotly_chart(
-                        style_line_chart(fig),
-                        use_container_width=True,
+                    fig.update_traces(line=dict(width=3, color="#80bfff"))
+                    fig.update_layout(
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        font_color="#f4f7ff",
+                        margin=dict(l=10, r=10, t=55, b=10),
+                        xaxis_title="날짜",
+                        yaxis_title="관객 수",
                     )
-                    with st.expander("월별 데이터 표"):
-                        st.dataframe(
-                            monthly[["월", "관객 수", "누적 관객 수"]],
-                            use_container_width=True,
-                            hide_index=True,
+                    st.plotly_chart(fig, use_container_width=True)
+
+            else:
+                with st.spinner("주간 관객 데이터를 불러오는 중..."):
+                    weekly = fetch_weekly_history(
+                        movie_code, selected_date, release_date_text
+                    )
+
+                if period == "주간":
+                    if weekly.empty:
+                        st.info(
+                            "주간 TOP 10 자료에서 이 영화의 관객 추이를 "
+                            "찾지 못했습니다."
+                        )
+                    else:
+                        fig = px.line(
+                            weekly,
+                            x="정렬 날짜",
+                            y="관객 수",
+                            markers=True,
+                            title="주간 관객 수",
+                        )
+                        fig.update_traces(
+                            line=dict(width=3, color="#80bfff")
+                        )
+                        fig.update_layout(
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="#f4f7ff",
+                            margin=dict(l=10, r=10, t=55, b=10),
+                            xaxis_title="주간 기준일",
+                            yaxis_title="관객 수",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                else:
+                    monthly = make_monthly_history(weekly)
+
+                    if monthly.empty:
+                        st.info("월별로 표시할 관객 데이터가 없습니다.")
+                    else:
+                        fig = px.line(
+                            monthly,
+                            x="기간",
+                            y="관객 수",
+                            markers=True,
+                            title="월별 관객 수 (확인 가능한 주간 자료 합산)",
+                        )
+                        fig.update_traces(
+                            line=dict(width=3, color="#80bfff")
+                        )
+                        fig.update_layout(
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font_color="#f4f7ff",
+                            margin=dict(l=10, r=10, t=55, b=10),
+                            xaxis_title="월",
+                            yaxis_title="관객 수",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.caption(
+                            "월별 수치는 공식 월간 박스오피스가 아니라 "
+                            "조회 가능한 주간 TOP 10 자료를 합산한 참고값입니다."
                         )
 
-                    st.caption(
-                        "월간 그래프는 공식 월간 집계가 아닙니다. "
-                        "조회된 주간 상위 10편 데이터의 합계이며 "
-                        "누락된 주가 있을 수 있습니다."
-                    )
+        except Exception as exc:
+            st.warning(f"그래프를 불러오지 못했습니다: {exc}")
 
-        st.caption(
-            "참고: 일별은 최근 60일만 조회하며, "
-            "순위권 밖 기간의 관객 수는 표시되지 않을 수 있습니다."
-        )
-
-    with info_col:
+    with right:
         st.subheader("🎞️ 영화 정보")
-
-        directors = detail.get("directors") or []
-        actors = detail.get("actors") or []
-        genres = detail.get("genres") or []
-        nations = detail.get("nations") or []
-
-        director_names = ", ".join(
-            p.get("peopleNm", "")
-            for p in directors if p.get("peopleNm")
-        ) or "정보 없음"
-
-        actor_names = ", ".join(
-            p.get("peopleNm", "")
-            for p in actors[:10] if p.get("peopleNm")
-        ) or "정보 없음"
-
-        genre_names = ", ".join(
-            p.get("genreNm", "")
-            for p in genres if p.get("genreNm")
-        ) or "정보 없음"
-
-        nation_names = ", ".join(
-            p.get("nationNm", "")
-            for p in nations if p.get("nationNm")
-        ) or "정보 없음"
-
-        st.markdown(f"**영문 제목:** {detail.get('movieNmEn') or '정보 없음'}")
-        st.markdown(
-            f"**개봉일:** {detail.get('openDt') or movie.get('openDt') or '정보 없음'}"
-        )
-        st.markdown(f"**감독:** {director_names}")
-        st.markdown(f"**출연:** {actor_names}")
-        st.markdown(f"**장르:** {genre_names}")
-        st.markdown(f"**제작 국가:** {nation_names}")
-        st.markdown(f"**상영 시간:** {detail.get('showTm') or '정보 없음'}분")
-
-        st.divider()
-        st.subheader("🔎 포스터와 시놉시스")
-
-        st.markdown(
-            "포스터와 줄거리는 네이버 검색 페이지에서 확인할 수 있어."
-        )
 
         st.link_button(
             "🖼️ 네이버에서 포스터 찾기",
             poster_url,
             use_container_width=True,
         )
-
         st.link_button(
             "📖 네이버에서 시놉시스 찾기",
             synopsis_url,
             use_container_width=True,
         )
 
-        st.caption(
-            "버튼을 누르면 네이버 검색 결과가 새 페이지로 열려."
+        st.markdown("---")
+
+        # 목록에서 선택했을 당시의 정보가 있으면 우선 사용
+        st.metric(
+            "선택 날짜 관객 수",
+            f"{format_number(movie.get('audiCnt'))}명",
+        )
+        st.metric(
+            "누적 관객 수",
+            f"{format_number(movie.get('audiAcc'))}명",
+        )
+        st.metric(
+            "스크린 수",
+            f"{format_number(movie.get('scrnCnt'))}개",
         )
 
-        st.divider()
-        st.subheader("🎟️ 선택한 날짜의 기록")
+        try:
+            with st.spinner("영화 상세 정보를 확인하는 중..."):
+                info = fetch_movie_info(movie_code)
 
-        m1, m2 = st.columns(2)
-        m1.metric("일일 관객 수", f"{fmt(movie.get('audiCnt'))}명")
-        m2.metric("누적 관객 수", f"{fmt(movie.get('audiAcc'))}명")
+            if info:
+                st.markdown("#### 기본 정보")
 
-        m3, m4 = st.columns(2)
-        m3.metric("상영 스크린 수", f"{fmt(movie.get('scrnCnt'))}개")
-        m4.metric("상영 횟수", f"{fmt(movie.get('showCnt'))}회")
+                if info.get("movieNm"):
+                    st.write(f"**영화명:** {info['movieNm']}")
+
+                if info.get("movieNmEn"):
+                    st.write(f"**영문명:** {info['movieNmEn']}")
+
+                if info.get("showTm"):
+                    st.write(f"**상영 시간:** {info['showTm']}분")
+
+                if info.get("openDt"):
+                    st.write(f"**개봉일:** {info['openDt']}")
+
+                genres = info.get("genres", [])
+                genre_names = [
+                    item.get("genreNm", "")
+                    for item in genres
+                    if item.get("genreNm")
+                ]
+                if genre_names:
+                    st.write(f"**장르:** {', '.join(genre_names)}")
+
+                directors = info.get("directors", [])
+                director_names = [
+                    item.get("peopleNm", "")
+                    for item in directors
+                    if item.get("peopleNm")
+                ]
+                if director_names:
+                    st.write(f"**감독:** {', '.join(director_names)}")
+
+                actors = info.get("actors", [])
+                actor_names = [
+                    item.get("peopleNm", "")
+                    for item in actors[:5]
+                    if item.get("peopleNm")
+                ]
+                if actor_names:
+                    st.write(f"**출연:** {', '.join(actor_names)}")
+            else:
+                st.caption("KOBIS에서 추가 영화 정보를 제공하지 않았습니다.")
+
+        except Exception as exc:
+            st.caption(f"추가 영화 정보를 불러오지 못했습니다: {exc}")
 
 
-# =========================================================
-# 앱 실행
-# =========================================================
-key = st.secrets.get("KOBIS_KEY", "")
-
-if not key:
+# --------------------------------------------------
+# 목록 화면
+# --------------------------------------------------
+def show_boxoffice_list():
     st.title("🎬 어제의 박스오피스")
-    st.error("KOBIS API 키가 설정되지 않았습니다.")
-    st.code('KOBIS_KEY = "발급받은_KOBIS_API_키"', language="toml")
-    st.stop()
-
-today = today_korea()
-yesterday = today - timedelta(days=1)
-
-if "selected_movie" not in st.session_state:
-    st.session_state["selected_movie"] = None
-
-if "selected_movie_data" not in st.session_state:
-    st.session_state["selected_movie_data"] = None
-
-if "boxoffice_date" not in st.session_state:
-    st.session_state["boxoffice_date"] = yesterday
-
-
-if st.session_state["selected_movie"]:
-    movie = st.session_state.get("selected_movie_data")
-    selected_date = st.session_state.get(
-        "selected_movie_date",
-        st.session_state["boxoffice_date"],
-    )
-
-    if movie:
-        render_movie_page(movie, str(key), selected_date)
-    else:
-        st.warning("선택한 영화 정보를 찾지 못했습니다.")
-        if st.button("목록으로 돌아가기"):
-            st.session_state["selected_movie"] = None
-            st.rerun()
-
-else:
-    st.title("🎬 어제의 박스오피스")
+    st.caption("영화진흥위원회(KOBIS) 공식 박스오피스 자료")
 
     selected_date = st.date_input(
         "조회 날짜",
-        value=yesterday,
-        min_value=date(2004, 1, 1),
-        max_value=yesterday,
-        help="오늘 날짜는 선택할 수 없습니다.",
+        value=YESTERDAY,
+        min_value=date(2004, 11, 11),
+        max_value=YESTERDAY,
+        help="오늘 자료는 아직 집계되지 않을 수 있어 어제까지만 선택할 수 있습니다.",
     )
 
-    st.session_state["boxoffice_date"] = selected_date
+    if selected_date > YESTERDAY:
+        st.warning("조회 날짜는 어제까지만 선택할 수 있습니다.")
+        return
 
     try:
-        with st.spinner("박스오피스 데이터를 불러오는 중입니다..."):
-            movies = daily_boxoffice(
-                selected_date.strftime("%Y%m%d"),
-                str(key),
-            )
-
-    except requests.exceptions.Timeout:
-        st.error("KOBIS API 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.")
-        st.stop()
-
-    except requests.exceptions.RequestException as exc:
-        st.error(f"KOBIS API 연결 오류: {exc}")
-        st.info("인터넷 연결과 API 키를 확인해 주세요.")
-        st.stop()
+        with st.spinner("박스오피스 데이터를 불러오는 중..."):
+            movies = fetch_daily_boxoffice(selected_date)
 
     except Exception as exc:
-        st.error(f"데이터 조회 오류: {exc}")
-        st.stop()
+        st.error("박스오피스 데이터를 불러오지 못했습니다.")
+        st.warning(str(exc))
+        st.markdown(
+            """
+            **확인할 사항**
+            - Streamlit Cloud의 `Settings → Secrets`에 `KOBIS_KEY`가 있는지 확인
+            - API 키가 정확한지 확인
+            - `requirements.txt`의 패키지가 정상 설치됐는지 확인
+            """
+        )
+        return
 
     if not movies:
         st.info("그날은 아직 집계 전입니다")
-    else:
-        render_movie_list(movies, selected_date)
-        st.caption(
-            "데이터 출처: 영화진흥위원회(KOBIS) 오픈 API. "
-            "관객 수 그래프는 조회 가능한 박스오피스 기록을 기준으로 합니다."
+        return
+
+    # 1위 영화 요약
+    first = movies[0]
+    metric1, metric2, metric3 = st.columns(3)
+
+    with metric1:
+        st.metric("🥇 1위 영화", first.get("movieNm", "-"))
+    with metric2:
+        st.metric("오늘 관객 수", f"{format_number(first.get('audiCnt'))}명")
+    with metric3:
+        st.metric("누적 관객 수", f"{format_number(first.get('audiAcc'))}명")
+
+    st.markdown("---")
+    st.subheader("🏆 순위별 박스오피스")
+
+    # 상위 5개 영화 관객 수 그래프
+    top5 = movies[:5]
+    chart_df = pd.DataFrame({
+        "영화명": [m.get("movieNm", "") for m in top5],
+        "관객 수": [safe_int(m.get("audiCnt")) for m in top5],
+    })
+
+    fig = px.bar(
+        chart_df,
+        x="관객 수",
+        y="영화명",
+        orientation="h",
+        title="관객 수 TOP 5",
+        text="관객 수",
+    )
+    fig.update_traces(
+        marker_color="#80bfff",
+        texttemplate="%{text:,}",
+        textposition="outside",
+        cliponaxis=False,
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font_color="#f4f7ff",
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=10, r=50, t=55, b=10),
+        xaxis_title="관객 수",
+        yaxis_title="",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("📋 전체 순위")
+
+    st.caption("순위 또는 영화명을 누르면 해당 영화의 상세 화면으로 이동합니다.")
+
+    for index, movie in enumerate(movies):
+        rank = safe_int(movie.get("rank"))
+        rank_inten = safe_int(movie.get("rankInten"))
+        movie_name = str(movie.get("movieNm", "이름 미상"))
+        cumulative = safe_int(movie.get("audiAcc"))
+
+        trophy = " 🏆" if cumulative > 1_000_000 else ""
+
+        if rank_inten > 0:
+            change_text = f"🔺 +{rank_inten}"
+        elif rank_inten < 0:
+            change_text = f"🔵 {rank_inten}"
+        else:
+            change_text = "➖ 0"
+
+        with st.container(border=True):
+            col_rank, col_change, col_title, col_release, col_audience, col_total, col_screen = (
+                st.columns([0.55, 0.75, 2.4, 0.9, 1.05, 1.1, 0.85])
+            )
+
+            with col_rank:
+                if st.button(
+                    f"{rank}위",
+                    key=f"rank_{selected_date}_{index}_{movie.get('movieCd')}",
+                    use_container_width=True,
+                ):
+                    st.session_state["selected_movie_data"] = movie
+                    st.session_state["selected_movie_date"] = selected_date
+                    st.session_state["page"] = "detail"
+                    st.rerun()
+
+            with col_change:
+                st.markdown(f"**{change_text}**")
+
+            with col_title:
+                if st.button(
+                    f"{movie_name}{trophy}",
+                    key=f"title_{selected_date}_{index}_{movie.get('movieCd')}",
+                    use_container_width=True,
+                ):
+                    st.session_state["selected_movie_data"] = movie
+                    st.session_state["selected_movie_date"] = selected_date
+                    st.session_state["page"] = "detail"
+                    st.rerun()
+
+            with col_release:
+                st.write(movie.get("openDt") or "-")
+
+            with col_audience:
+                st.write(format_number(movie.get("audiCnt")))
+
+            with col_total:
+                st.write(format_number(movie.get("audiAcc")))
+
+            with col_screen:
+                st.write(format_number(movie.get("scrnCnt")))
+
+
+# --------------------------------------------------
+# 앱 진입점: 상세 화면 오류가 목록 화면까지 막지 않게 처리
+# --------------------------------------------------
+def main():
+    if "page" not in st.session_state:
+        st.session_state["page"] = "list"
+
+    if st.session_state["page"] == "detail":
+        movie = st.session_state.get("selected_movie_data")
+        selected_date = st.session_state.get(
+            "selected_movie_date", YESTERDAY
         )
+
+        if not movie:
+            st.session_state["page"] = "list"
+            st.warning("선택한 영화 정보를 찾을 수 없어 목록으로 돌아갑니다.")
+            st.rerun()
+            return
+
+        try:
+            show_movie_detail(movie, selected_date)
+        except Exception as exc:
+            st.error("영화 상세 화면을 표시하는 중 문제가 발생했습니다.")
+            st.exception(exc)
+
+            if st.button("목록으로 돌아가기", key="detail_error_back"):
+                st.session_state["page"] = "list"
+                st.rerun()
+    else:
+        show_boxoffice_list()
+
+
+try:
+    main()
+except Exception as exc:
+    st.error("앱을 표시하는 중 예상하지 못한 오류가 발생했습니다.")
+    st.exception(exc)
+    st.info(
+        "오류 메시지를 확인해 주세요. "
+        "화면 전체가 비어 있는 대신 문제의 원인을 표시하도록 처리했습니다."
+    )
