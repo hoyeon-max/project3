@@ -88,15 +88,11 @@ def weekly_boxoffice(target_dt, key):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_kobis_web_info(movie_cd):
-    """
-    KOBIS 영화 상세 웹페이지에서 포스터와 줄거리 정보를 찾는다.
-    페이지 구조나 접근 정책에 따라 정보가 반환되지 않을 수 있다.
-    """
+    """KOBIS 웹페이지에서 포스터·줄거리를 찾는다."""
     url = (
         f"{KOBIS_WEB}/kobis/business/mast/mvie/"
         f"searchMovieDtl.do?movieCd={movie_cd}"
     )
-
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept-Language": "ko-KR,ko;q=0.9",
@@ -129,7 +125,6 @@ def get_kobis_web_info(movie_cd):
                     break
 
         synopsis = ""
-        # 줄거리 영역의 후보 선택자
         for selector in [
             "#synop",
             ".synop",
@@ -146,7 +141,6 @@ def get_kobis_web_info(movie_cd):
                     synopsis = text
                     break
 
-        # 선택자에서 찾지 못하면 페이지 텍스트의 줄거리 항목을 확인
         if not synopsis:
             page_text = soup.get_text("\n", strip=True)
             match = re.search(
@@ -160,7 +154,6 @@ def get_kobis_web_info(movie_cd):
                     match.group(1),
                 )[0].strip()
 
-        # 사이트 메타 설명은 줄거리 영역이 없는 경우에만 보조로 사용
         if not synopsis:
             meta = soup.select_one('meta[name="description"]')
             if meta:
@@ -175,20 +168,55 @@ def get_kobis_web_info(movie_cd):
         }
 
     except Exception:
-        return {
-            "poster": "",
-            "synopsis": "",
-            "url": url,
-        }
+        return {"poster": "", "synopsis": "", "url": url}
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def daily_history(movie_cd, open_date, end_date, key):
+    """
+    최근 60일의 일별 상위 10편 기록을 조회한다.
+    순위권에 포함된 날짜만 반환되므로 전체 일별 관객 수가 아닐 수 있다.
+    """
+    try:
+        release = datetime.strptime(open_date, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return pd.DataFrame()
+
+    end = date.fromisoformat(end_date)
+    start = max(release, end - timedelta(days=59))
+
+    rows = []
+    current = start
+
+    while current <= end:
+        try:
+            movies = daily_boxoffice(current.strftime("%Y%m%d"), key)
+            for item in movies:
+                if str(item.get("movieCd", "")) == str(movie_cd):
+                    rows.append({
+                        "날짜": current,
+                        "관객 수": to_int(item.get("audiCnt")),
+                        "누적 관객 수": to_int(item.get("audiAcc")),
+                    })
+                    break
+        except Exception:
+            pass
+
+        current += timedelta(days=1)
+
+    if not rows:
+        return pd.DataFrame()
+
+    return pd.DataFrame(rows).sort_values("날짜")
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def weekly_history(movie_cd, open_date, end_date, key):
-    """주간 박스오피스 상위 10편에서 조회되는 기록만 모은다."""
+    """
+    주간 상위 10편에서 해당 영화가 반환된 주만 수집한다.
+    """
     try:
-        release = datetime.strptime(
-            open_date, "%Y-%m-%d"
-        ).date()
+        release = datetime.strptime(open_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return pd.DataFrame()
 
@@ -198,45 +226,65 @@ def weekly_history(movie_cd, open_date, end_date, key):
 
     rows = []
     seen = set()
-    query_date = end
+    current = end
 
-    while query_date >= release:
+    while current >= release:
         try:
-            movies = weekly_boxoffice(
-                query_date.strftime("%Y%m%d"), key
-            )
+            movies = weekly_boxoffice(current.strftime("%Y%m%d"), key)
             for item in movies:
                 if str(item.get("movieCd", "")) != str(movie_cd):
                     continue
 
                 period = str(item.get("showRange", ""))
-                identity = period or query_date.isoformat()
+                identity = period or current.isoformat()
                 if identity in seen:
                     continue
 
                 seen.add(identity)
                 rows.append({
-                    "조회 기준일": query_date,
-                    "주간 관객 수": to_int(item.get("audiCnt")),
-                    "주간 누적 관객 수": to_int(item.get("audiAcc")),
-                    "상영 기간": period or query_date.isoformat(),
+                    "날짜": current,
+                    "관객 수": to_int(item.get("audiCnt")),
+                    "누적 관객 수": to_int(item.get("audiAcc")),
+                    "상영 기간": period or current.isoformat(),
                 })
         except Exception:
             pass
 
-        query_date -= timedelta(days=7)
+        current -= timedelta(days=7)
 
     if not rows:
         return pd.DataFrame()
 
-    return pd.DataFrame(rows).sort_values("조회 기준일")
+    return pd.DataFrame(rows).sort_values("날짜")
+
+
+def make_monthly_history(weekly_df):
+    """
+    조회 가능한 주간 데이터를 월별로 합산한다.
+    공식 월간 집계가 아닌 참고용 값이다.
+    """
+    if weekly_df.empty:
+        return pd.DataFrame()
+
+    df = weekly_df.copy()
+    df["월"] = pd.to_datetime(df["날짜"]).dt.to_period("M").astype(str)
+
+    monthly = (
+        df.groupby("월", as_index=False)
+        .agg({
+            "관객 수": "sum",
+            "누적 관객 수": "last",
+        })
+    )
+    monthly["날짜"] = pd.to_datetime(monthly["월"] + "-01")
+    return monthly.sort_values("날짜")
 
 
 def render_movie_list(movies, selected_date):
     st.title("🎬 어제의 박스오피스")
     st.caption(
         f"{selected_date:%Y년 %m월 %d일} · "
-        "순위 또는 영화 제목을 눌러 상세 화면으로 이동하세요."
+        "순위 또는 영화 제목을 누르면 상세 화면으로 이동합니다."
     )
 
     first = movies[0]
@@ -245,54 +293,31 @@ def render_movie_list(movies, selected_date):
     c2.metric("1위 관객 수", f"{fmt(first.get('audiCnt'))}명")
     c3.metric("1위 누적 관객", f"{fmt(first.get('audiAcc'))}명")
 
-    rows = []
-    for movie in movies:
-        change = to_int(movie.get("rankInten"))
-        if change > 0:
-            movement = f"🔴 ▲ {change}"
-        elif change < 0:
-            movement = f"🔵 ▼ {abs(change)}"
-        else:
-            movement = "—"
-
-        title = str(movie.get("movieNm", "제목 미상"))
-        if to_int(movie.get("audiAcc")) > 1_000_000:
-            title = "🏆 " + title
-
-        rows.append({
-            "순위": to_int(movie.get("rank")),
-            "순위 변동": movement,
-            "영화명": title,
-            "개봉일": movie.get("openDt") or "-",
-            "관객수": to_int(movie.get("audiCnt")),
-            "누적관객": to_int(movie.get("audiAcc")),
-            "스크린수": to_int(movie.get("scrnCnt")),
-        })
-
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame([
+        {
+            "순위": to_int(m.get("rank")),
+            "영화명": (
+                "🏆 " if to_int(m.get("audiAcc")) > 1_000_000 else ""
+            ) + str(m.get("movieNm", "제목 미상")),
+            "관객수": to_int(m.get("audiCnt")),
+        }
+        for m in movies
+    ])
 
     st.subheader("📊 관객 수 상위 5편")
-    top5 = df.head(5).copy()
-    top5["그래프 영화명"] = top5["영화명"].str.replace(
-        "🏆 ", "", regex=False
-    )
-
+    top5 = df.head(5).sort_values("관객수")
     fig = px.bar(
-        top5.sort_values("관객수"),
+        top5,
         x="관객수",
-        y="그래프 영화명",
+        y="영화명",
         orientation="h",
-        labels={
-            "관객수": "관객 수(명)",
-            "그래프 영화명": "영화",
-        },
+        labels={"관객수": "관객 수(명)", "영화명": "영화"},
     )
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("🎟️ 일별 박스오피스")
-    st.caption("아래에서 순위 또는 영화 제목을 클릭하세요.")
+    st.caption("각 행의 순위 또는 영화 제목 버튼을 누르세요.")
 
-    # 각 행의 순위와 제목 버튼은 동일한 영화 상세 화면을 연다.
     header = st.columns([0.8, 1.0, 3.5, 1.5, 1.5, 1.5, 1.1])
     for col, label in zip(
         header,
@@ -306,6 +331,7 @@ def render_movie_list(movies, selected_date):
         rank = to_int(movie.get("rank"))
         code = str(movie.get("movieCd", ""))
         title = str(movie.get("movieNm", "제목 미상"))
+
         if to_int(movie.get("audiAcc")) > 1_000_000:
             title = "🏆 " + title
 
@@ -348,9 +374,8 @@ def render_movie_page(movie, key, selected_date):
         st.rerun()
 
     st.title(f"🎬 {movie_name}")
-    st.caption("KOBIS 영화 정보 및 관객 수 기록")
+    st.caption("영화 상세 정보 및 관객 수 변화")
 
-    # 상세정보 조회
     with st.spinner("영화 정보를 불러오는 중입니다..."):
         try:
             detail = movie_detail(movie_cd, key)
@@ -418,13 +443,12 @@ def render_movie_page(movie, key, selected_date):
         st.markdown(f"**상영 시간:** {detail.get('showTm') or '정보 없음'}분")
 
         st.subheader("📖 시놉시스")
-
         if web_info.get("synopsis"):
             st.write(web_info["synopsis"])
         else:
             st.info(
                 "KOBIS 웹페이지에서 줄거리를 자동으로 찾지 못했습니다. "
-                "웹페이지 구조 또는 접근 제한 때문에 정보가 없을 수 있습니다."
+                "아래 링크에서 확인해 주세요."
             )
             st.link_button(
                 "KOBIS 영화 상세 페이지 열기",
@@ -432,53 +456,106 @@ def render_movie_page(movie, key, selected_date):
             )
 
     st.divider()
-    st.subheader("📈 주간 관객 수 변화")
-    st.caption(
-        "꺾은선 그래프입니다. KOBIS 주간 박스오피스는 상위 10편만 제공하므로 "
-        "순위권에 포함된 주만 표시될 수 있습니다."
+    st.subheader("📈 관객 수 변화")
+
+    period = st.radio(
+        "그래프 기간",
+        ["일간", "주간", "월간"],
+        horizontal=True,
+        key=f"period_{movie_cd}",
     )
 
     open_date = str(movie.get("openDt", "")).strip()
     end_date = min(selected_date, today_korea())
+    end_iso = end_date.isoformat()
 
-    with st.spinner("주간 관객 수 기록을 조회하고 있습니다..."):
-        history = weekly_history(
-            movie_cd,
-            open_date,
-            end_date.isoformat(),
-            key,
+    if period == "일간":
+        st.caption(
+            "최근 60일의 일별 상위 10편 기록입니다. "
+            "영화가 일별 순위권에 없던 날짜는 표시되지 않을 수 있습니다."
         )
+        with st.spinner("일별 관객 수 데이터를 조회하고 있습니다..."):
+            history = daily_history(
+                movie_cd, open_date, end_iso, key
+            )
 
-    if history.empty:
-        st.warning(
-            "조회 가능한 주간 관객 수 기록이 없습니다. "
-            "영화가 주간 상위 10편에 포함되지 않았을 수 있습니다."
-        )
+        if history.empty:
+            st.warning("조회 가능한 일별 관객 수 기록이 없습니다.")
+        else:
+            fig = px.line(
+                history,
+                x="날짜",
+                y="관객 수",
+                markers=True,
+                hover_data=["누적 관객 수"],
+                labels={
+                    "날짜": "날짜",
+                    "관객 수": "관객 수(명)",
+                },
+                title=f"{movie_name} 일별 관객 수",
+            )
+            fig.update_layout(hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(history, use_container_width=True, hide_index=True)
+
     else:
-        fig = px.line(
-            history,
-            x="조회 기준일",
-            y="주간 관객 수",
-            markers=True,
-            hover_data=["주간 누적 관객 수", "상영 기간"],
-            labels={
-                "조회 기준일": "조회 기준일",
-                "주간 관객 수": "주간 관객 수(명)",
-            },
-            title=f"{movie_name} 주간 관객 수",
+        st.caption(
+            "KOBIS 주간 박스오피스 상위 10편에 포함된 주만 조회합니다."
         )
-        fig.update_layout(
-            hovermode="x unified",
-            xaxis_title="조회 기준일",
-            yaxis_title="주간 관객 수(명)",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        with st.spinner("주간 관객 수 데이터를 조회하고 있습니다..."):
+            weekly = weekly_history(
+                movie_cd, open_date, end_iso, key
+            )
 
-        st.dataframe(
-            history,
-            use_container_width=True,
-            hide_index=True,
-        )
+        if weekly.empty:
+            st.warning("조회 가능한 주간 관객 수 기록이 없습니다.")
+        elif period == "주간":
+            fig = px.line(
+                weekly,
+                x="날짜",
+                y="관객 수",
+                markers=True,
+                hover_data=["누적 관객 수", "상영 기간"],
+                labels={
+                    "날짜": "조회 기준일",
+                    "관객 수": "주간 관객 수(명)",
+                },
+                title=f"{movie_name} 주간 관객 수",
+            )
+            fig.update_layout(hovermode="x unified")
+            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(weekly, use_container_width=True, hide_index=True)
+
+        else:
+            monthly = make_monthly_history(weekly)
+
+            if monthly.empty:
+                st.warning("월별로 묶을 데이터가 없습니다.")
+            else:
+                st.info(
+                    "월간 값은 공식 월간 집계가 아닙니다. "
+                    "조회된 주간 상위 10편의 관객 수를 월별로 합산한 참고값이며, "
+                    "누락된 주가 있으면 실제 월간 관객 수와 다를 수 있습니다."
+                )
+                fig = px.line(
+                    monthly,
+                    x="날짜",
+                    y="관객 수",
+                    markers=True,
+                    hover_data=["누적 관객 수"],
+                    labels={
+                        "날짜": "월",
+                        "관객 수": "집계된 주간 관객 수 합계(명)",
+                    },
+                    title=f"{movie_name} 월별 참고 추이",
+                )
+                fig.update_layout(hovermode="x unified")
+                st.plotly_chart(fig, use_container_width=True)
+                st.dataframe(
+                    monthly[["월", "관객 수", "누적 관객 수"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
 
 # =========================================================
@@ -498,16 +575,16 @@ yesterday = today - timedelta(days=1)
 if "selected_movie" not in st.session_state:
     st.session_state["selected_movie"] = None
 
-# 날짜 선택과 박스오피스 조회는 목록 화면에서만 표시
+if "boxoffice_date" not in st.session_state:
+    st.session_state["boxoffice_date"] = yesterday
+
 selected_code = st.session_state.get("selected_movie")
 
 if selected_code:
+    selected_date = st.session_state["boxoffice_date"]
+
     try:
         with st.spinner("영화 정보를 확인하는 중입니다..."):
-            # 선택한 영화의 이름/개봉일을 현재 목록에서 먼저 찾는다.
-            selected_date = st.session_state.get(
-                "boxoffice_date", yesterday
-            )
             movies = daily_boxoffice(
                 selected_date.strftime("%Y%m%d"), str(key)
             )
@@ -520,7 +597,6 @@ if selected_code:
             )
 
             if movie is None:
-                # 날짜 변경으로 목록에 없더라도 기본 조회일의 기록을 확인
                 movies = daily_boxoffice(
                     yesterday.strftime("%Y%m%d"), str(key)
                 )
@@ -533,10 +609,7 @@ if selected_code:
                 )
 
         if movie is None:
-            st.warning(
-                "선택한 영화의 일별 목록 정보를 찾지 못했습니다. "
-                "목록으로 돌아가 다시 선택해 주세요."
-            )
+            st.warning("영화 정보를 찾지 못했습니다.")
             if st.button("목록으로 돌아가기"):
                 st.session_state["selected_movie"] = None
                 st.rerun()
@@ -550,6 +623,7 @@ if selected_code:
             st.rerun()
 
 else:
+    st.title("🎬 어제의 박스오피스")
     selected_date = st.date_input(
         "조회 날짜",
         value=yesterday,
@@ -581,5 +655,5 @@ else:
         render_movie_list(movies, selected_date)
         st.caption(
             "데이터 출처: 영화진흥위원회(KOBIS) 오픈 API 및 KOBIS 웹페이지. "
-            "포스터·줄거리 자동 수집은 웹페이지 구조와 접근 상태에 따라 실패할 수 있습니다."
+            "순위권 밖 기간의 관객 수는 제공되지 않을 수 있습니다."
         )
