@@ -7,6 +7,9 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import quote_plus
 
+# ==================================================
+# 1. 기본 설정
+# ==================================================
 st.set_page_config(
     page_title="어제의 박스오피스",
     page_icon="🎬",
@@ -16,28 +19,38 @@ st.set_page_config(
 KST = ZoneInfo("Asia/Seoul")
 TODAY = datetime.now(KST).date()
 YESTERDAY = TODAY - timedelta(days=1)
-BASE_URL = "https://www.kobis.or.kr/kobisopenapi/webservice/rest"
 
-# --------------------------------------------------
-# 스타일: 투명도는 배경 필름 장식에만 적용
-# --------------------------------------------------
+BASE_URL = (
+    "https://www.kobis.or.kr/"
+    "kobisopenapi/webservice/rest"
+)
+
+
+# ==================================================
+# 2. 화면 디자인
+# 필름 장식에만 투명도 적용
+# ==================================================
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(135deg, #081326, #132747 55%, #081326);
+    background: linear-gradient(
+        135deg,
+        #081326 0%,
+        #132747 55%,
+        #081326 100%
+    );
     color: #f5f8ff;
 }
 
-/* 투명한 필름 장식만 배경에 표시 */
 .stApp::before {
     content: "";
     position: fixed;
     z-index: 0;
     pointer-events: none;
-    top: 13%;
-    left: -7%;
-    width: 115%;
-    height: 135px;
+    top: 15%;
+    left: -8%;
+    width: 120%;
+    height: 130px;
     opacity: 0.075;
     border-top: 15px dashed #d8e7ff;
     border-bottom: 15px dashed #d8e7ff;
@@ -45,11 +58,7 @@ st.markdown("""
     transform: rotate(-9deg);
 }
 
-/* 실제 콘텐츠는 장식 위에 배치 */
-.stApp > header,
-.stApp [data-testid="stAppViewContainer"],
-.stApp [data-testid="stHeader"],
-.stApp .block-container {
+.stApp [data-testid="stAppViewContainer"] {
     position: relative;
     z-index: 1;
 }
@@ -65,15 +74,10 @@ h1, h2, h3, p, label,
     color: #f5f8ff;
 }
 
-/* 불투명한 카드 */
-[data-testid="stMetric"],
-[data-testid="stVerticalBlockBorderWrapper"] {
+[data-testid="stMetric"] {
     background-color: #172b49 !important;
     border: 1px solid #354b6c !important;
     border-radius: 14px !important;
-}
-
-[data-testid="stMetric"] {
     padding: 16px;
 }
 
@@ -85,7 +89,6 @@ h1, h2, h3, p, label,
     color: #ffffff !important;
 }
 
-/* 버튼은 선명한 단색 */
 .stButton > button,
 .stLinkButton > a {
     background-color: #24466f !important;
@@ -104,12 +107,17 @@ h1, h2, h3, p, label,
     color: #ffffff !important;
 }
 
-/* 입력 컨트롤도 불투명하게 */
 div[data-baseweb="select"] > div,
 div[data-baseweb="input"] > div {
     background-color: #172b49 !important;
     color: #ffffff !important;
     border-color: #526987 !important;
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background-color: #172b49 !important;
+    border-color: #354b6c !important;
+    border-radius: 14px !important;
 }
 
 div[data-testid="stDataFrame"] {
@@ -124,9 +132,9 @@ hr {
 """, unsafe_allow_html=True)
 
 
-# --------------------------------------------------
-# KOBIS API
-# --------------------------------------------------
+# ==================================================
+# 3. KOBIS API
+# ==================================================
 def get_api_key():
     try:
         return str(st.secrets.get("KOBIS_KEY", "")).strip()
@@ -136,42 +144,54 @@ def get_api_key():
 
 def api_get(endpoint, params):
     key = get_api_key()
+
     if not key:
         raise RuntimeError(
-            'API 키가 없습니다. Streamlit Cloud Secrets에 '
-            'KOBIS_KEY = "발급받은_API_키"를 등록해 주세요.'
+            'API 키가 없습니다. Streamlit Cloud의 '
+            'Settings → Secrets에 다음 항목을 설정하세요: '
+            'KOBIS_KEY = "발급받은_API_키"'
         )
 
-    url = f"{BASE_URL}/{endpoint}.json"
     request_params = dict(params)
     request_params["key"] = key
 
+    url = f"{BASE_URL}/{endpoint}.json"
+
     try:
-        response = requests.get(url, params=request_params, timeout=15)
+        response = requests.get(
+            url,
+            params=request_params,
+            timeout=15,
+        )
         response.raise_for_status()
         data = response.json()
+
     except requests.Timeout as exc:
-        raise RuntimeError("KOBIS 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.") from exc
+        raise RuntimeError(
+            "KOBIS 서버 응답 시간이 초과되었습니다."
+        ) from exc
+
     except requests.RequestException as exc:
-        raise RuntimeError("KOBIS 서버에 연결하지 못했습니다.") from exc
+        raise RuntimeError(
+            "KOBIS 서버에 연결하지 못했습니다."
+        ) from exc
+
     except ValueError as exc:
-        raise RuntimeError("KOBIS 응답을 해석할 수 없습니다. API 키를 확인해 주세요.") from exc
+        raise RuntimeError(
+            "KOBIS 응답을 읽을 수 없습니다. API 키를 확인하세요."
+        ) from exc
 
     if not isinstance(data, dict):
-        raise RuntimeError("KOBIS에서 예상하지 못한 응답을 받았습니다.")
+        raise RuntimeError("KOBIS 응답 형식이 올바르지 않습니다.")
 
     if data.get("faultInfo"):
-        message = data["faultInfo"].get("message", "KOBIS API 오류")
+        message = data["faultInfo"].get(
+            "message",
+            "KOBIS API 오류",
+        )
         raise RuntimeError(message)
 
     return data
-
-
-def number(value):
-    try:
-        return f"{int(value or 0):,}"
-    except (ValueError, TypeError):
-        return "0"
 
 
 def int_value(value):
@@ -181,133 +201,256 @@ def int_value(value):
         return 0
 
 
-# --------------------------------------------------
-# 데이터 조회: 반복 호출 결과는 캐시
-# --------------------------------------------------
+def number(value):
+    return f"{int_value(value):,}"
+
+
+# ==================================================
+# 4. 일별 박스오피스
+# ==================================================
 @st.cache_data(ttl=900, show_spinner=False)
 def get_daily_boxoffice(date_text):
-    target = datetime.strptime(date_text, "%Y-%m-%d").date()
+    target_date = datetime.strptime(
+        date_text, "%Y-%m-%d"
+    ).date()
+
     result = api_get(
         "boxoffice/searchDailyBoxOfficeList",
-        {"targetDt": target.strftime("%Y%m%d")},
+        {
+            "targetDt": target_date.strftime("%Y%m%d"),
+        },
     )
-    return result.get("boxOfficeResult", {}).get("dailyBoxOfficeList", [])
+
+    movies = result.get(
+        "boxOfficeResult", {}
+    ).get("dailyBoxOfficeList", [])
+
+    return movies if isinstance(movies, list) else []
 
 
+# ==================================================
+# 5. 주간 박스오피스
+# ==================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_weekly_boxoffice(date_text):
-    target = datetime.strptime(date_text, "%Y-%m-%d").date()
+    target_date = datetime.strptime(
+        date_text, "%Y-%m-%d"
+    ).date()
+
     result = api_get(
         "boxoffice/searchWeeklyBoxOfficeList",
-        {"targetDt": target.strftime("%Y%m%d"), "weekGb": "0"},
+        {
+            "targetDt": target_date.strftime("%Y%m%d"),
+            "weekGb": "0",
+        },
     )
-    return result.get("boxOfficeResult", {}).get("weeklyBoxOfficeList", [])
+
+    movies = result.get(
+        "boxOfficeResult", {}
+    ).get("weeklyBoxOfficeList", [])
+
+    return movies if isinstance(movies, list) else []
 
 
+# ==================================================
+# 6. 영화 상세 정보
+# ==================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_movie_info(movie_code):
-    result = api_get("movie/searchMovieInfo", {"movieCd": str(movie_code)})
-    return result.get("movieInfoResult", {}).get("movieInfo", {})
+    result = api_get(
+        "movie/searchMovieInfo",
+        {"movieCd": str(movie_code)},
+    )
+
+    return result.get(
+        "movieInfoResult", {}
+    ).get("movieInfo", {})
 
 
+# ==================================================
+# 7. 일별 관객 추이
+# 최근 30일
+# ==================================================
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_daily_history(movie_code, end_text, release_text):
-    end_date = datetime.strptime(end_text, "%Y-%m-%d").date()
+    end_date = datetime.strptime(
+        end_text, "%Y-%m-%d"
+    ).date()
 
     try:
-        release_date = datetime.strptime(release_text, "%Y%m%d").date()
+        release_date = datetime.strptime(
+            release_text, "%Y%m%d"
+        ).date()
     except (ValueError, TypeError):
         release_date = end_date - timedelta(days=29)
 
-    start_date = max(end_date - timedelta(days=29), release_date)
-    rows = []
-    current = start_date
+    start_date = max(
+        end_date - timedelta(days=29),
+        release_date,
+    )
 
-    # 최근 30일로 제한해 로딩 속도 개선
-    while current <= end_date:
+    rows = []
+    current_date = start_date
+
+    while current_date <= end_date:
         try:
-            movies = get_daily_boxoffice(current.isoformat())
-            movie = next(
-                (m for m in movies if str(m.get("movieCd")) == str(movie_code)),
+            movies = get_daily_boxoffice(
+                current_date.isoformat()
+            )
+
+            matched_movie = next(
+                (
+                    item for item in movies
+                    if str(item.get("movieCd", ""))
+                    == str(movie_code)
+                ),
                 None,
             )
-            if movie:
+
+            if matched_movie:
                 rows.append({
-                    "날짜": current,
-                    "관객 수": int_value(movie.get("audiCnt")),
+                    "날짜": current_date,
+                    "관객 수": int_value(
+                        matched_movie.get("audiCnt")
+                    ),
                 })
+
         except Exception:
+            # 한 날짜의 오류가 전체 화면을 막지 않도록 처리
             pass
-        current += timedelta(days=1)
 
-    return pd.DataFrame(rows, columns=["날짜", "관객 수"])
+        current_date += timedelta(days=1)
+
+    return pd.DataFrame(
+        rows,
+        columns=["날짜", "관객 수"],
+    )
 
 
+# ==================================================
+# 8. 주별 관객 추이
+# ==================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_weekly_history(movie_code, end_text, release_text):
-    end_date = datetime.strptime(end_text, "%Y-%m-%d").date()
+    end_date = datetime.strptime(
+        end_text, "%Y-%m-%d"
+    ).date()
 
     try:
-        release_date = datetime.strptime(release_text, "%Y%m%d").date()
+        release_date = datetime.strptime(
+            release_text, "%Y%m%d"
+        ).date()
     except (ValueError, TypeError):
         release_date = end_date - timedelta(days=365)
 
     rows = []
-    current = end_date
+    current_date = end_date
 
-    # 최대 52주까지만 조회
+    # 최대 52주 조회
     for _ in range(52):
-        if current < release_date:
+        if current_date < release_date:
             break
 
         try:
-            movies = get_weekly_boxoffice(current.isoformat())
-            movie = next(
-                (m for m in movies if str(m.get("movieCd")) == str(movie_code)),
+            movies = get_weekly_boxoffice(
+                current_date.isoformat()
+            )
+
+            matched_movie = next(
+                (
+                    item for item in movies
+                    if str(item.get("movieCd", ""))
+                    == str(movie_code)
+                ),
                 None,
             )
-            if movie:
+
+            if matched_movie:
                 rows.append({
-                    "날짜": current,
-                    "관객 수": int_value(movie.get("audiCnt")),
-                    "기간": movie.get("showRange", current.strftime("%Y%m%d")),
+                    "날짜": current_date,
+                    "관객 수": int_value(
+                        matched_movie.get("audiCnt")
+                    ),
+                    "기간": matched_movie.get(
+                        "showRange",
+                        current_date.strftime("%Y%m%d"),
+                    ),
                 })
+
         except Exception:
             pass
 
-        current -= timedelta(days=7)
+        current_date -= timedelta(days=7)
 
     if not rows:
-        return pd.DataFrame(columns=["날짜", "관객 수", "기간"])
+        return pd.DataFrame(
+            columns=["날짜", "관객 수", "기간"]
+        )
 
-    return pd.DataFrame(rows).sort_values("날짜").reset_index(drop=True)
-
-
-def naver_links(movie_name):
-    name = quote_plus(movie_name)
-    poster = (
-        "https://search.naver.com/search.naver"
-        f"?where=image&query={name}+포스터"
+    return (
+        pd.DataFrame(rows)
+        .drop_duplicates(subset=["날짜"])
+        .sort_values("날짜")
+        .reset_index(drop=True)
     )
-    synopsis = (
+
+
+# ==================================================
+# 9. 선택한 영화에 맞는 링크 생성
+# ==================================================
+def movie_links(movie_name):
+    # 반드시 선택된 영화의 제목으로 링크를 생성한다.
+    encoded_name = quote_plus(str(movie_name).strip())
+
+    poster_url = (
         "https://search.naver.com/search.naver"
-        f"?query={name}+줄거리+시놉시스"
+        f"?where=image&query={encoded_name}+포스터"
     )
-    return poster, synopsis
+
+    synopsis_url = (
+        "https://search.naver.com/search.naver"
+        f"?query={encoded_name}+줄거리+시놉시스"
+    )
+
+    trailer_url = (
+        "https://www.youtube.com/results?search_query="
+        f"{encoded_name}+공식+예고편"
+    )
+
+    return poster_url, synopsis_url, trailer_url
 
 
-# --------------------------------------------------
-# 공통 그래프 스타일
-# --------------------------------------------------
-def draw_line_chart(df, x, title):
+# ==================================================
+# 10. 영화 선택 콜백
+# 중요: 반복문 변수에 의존하지 않고 선택한 영화 전달
+# ==================================================
+def open_movie_detail(movie_data, selected_date_text):
+    st.session_state["selected_movie"] = dict(movie_data)
+    st.session_state["selected_date"] = selected_date_text
+    st.session_state["page"] = "detail"
+
+
+def return_to_list():
+    st.session_state["page"] = "list"
+
+
+# ==================================================
+# 11. 그래프 출력
+# ==================================================
+def draw_line_chart(df, x_column, title):
     fig = px.line(
         df,
-        x=x,
+        x=x_column,
         y="관객 수",
         markers=True,
         title=title,
     )
-    fig.update_traces(line=dict(color="#80bfff", width=3))
+
+    fig.update_traces(
+        line=dict(color="#80bfff", width=3),
+        marker=dict(size=7),
+    )
+
     fig.update_layout(
         paper_bgcolor="#172b49",
         plot_bgcolor="#172b49",
@@ -317,154 +460,266 @@ def draw_line_chart(df, x, title):
         xaxis_title="기간",
         yaxis_title="관객 수",
     )
-    st.plotly_chart(fig, use_container_width=True)
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+    )
 
 
-# --------------------------------------------------
-# 영화 상세 화면
-# --------------------------------------------------
+# ==================================================
+# 12. 영화 상세 화면
+# ==================================================
 def show_detail(movie, selected_date):
+    # 상세 화면은 전달받은 영화 데이터만 사용
+    movie = dict(movie)
+
     movie_name = str(movie.get("movieNm", "영화 정보"))
     movie_code = str(movie.get("movieCd", ""))
     release_text = str(movie.get("openDt", ""))
 
-    if st.button("← 박스오피스 목록으로 돌아가기", key="back_list"):
-        st.session_state["page"] = "list"
-        st.rerun()
+    st.button(
+        "← 박스오피스 목록으로 돌아가기",
+        key="back_to_list",
+        on_click=return_to_list,
+    )
 
     st.title(f"🎬 {movie_name}")
-    st.caption(f"조회 기준일: {selected_date.strftime('%Y-%m-%d')}")
+    st.caption(
+        f"조회 기준일: {selected_date.strftime('%Y-%m-%d')}"
+    )
 
-    poster_url, synopsis_url = naver_links(movie_name)
+    # 선택한 영화 제목으로만 외부 링크를 생성
+    poster_url, synopsis_url, trailer_url = movie_links(
+        movie_name
+    )
 
-    # 상세 페이지 안에서 영화 정보와 해당 영화 링크를 함께 표시
-    info_col, graph_col = st.columns([0.9, 1.25], gap="large")
+    info_col, graph_col = st.columns(
+        [0.9, 1.25],
+        gap="large",
+    )
 
+    # ----------------------------------------------
+    # 왼쪽: 선택한 영화의 정보와 외부 링크
+    # ----------------------------------------------
     with info_col:
         with st.container(border=True):
             st.subheader("🎞️ 영화 정보")
+
+            st.markdown(f"### {movie_name}")
 
             st.link_button(
                 "🖼️ 네이버에서 포스터 찾기",
                 poster_url,
                 use_container_width=True,
             )
+
             st.link_button(
                 "📖 네이버에서 시놉시스 찾기",
                 synopsis_url,
                 use_container_width=True,
             )
 
-            st.markdown("---")
-            st.metric("조회일 관객 수", f"{number(movie.get('audiCnt'))}명")
-            st.metric("누적 관객 수", f"{number(movie.get('audiAcc'))}명")
-            st.metric("스크린 수", f"{number(movie.get('scrnCnt'))}개")
+            st.link_button(
+                "🎬 유튜브에서 공식 예고편 찾기",
+                trailer_url,
+                use_container_width=True,
+            )
 
+            st.markdown("---")
+
+            st.metric(
+                "조회일 관객 수",
+                f"{number(movie.get('audiCnt'))}명",
+            )
+
+            st.metric(
+                "누적 관객 수",
+                f"{number(movie.get('audiAcc'))}명",
+            )
+
+            st.metric(
+                "스크린 수",
+                f"{number(movie.get('scrnCnt'))}개",
+            )
+
+            # KOBIS 영화 상세 정보
             try:
-                info = get_movie_info(movie_code)
+                with st.spinner("영화 정보를 불러오는 중..."):
+                    info = get_movie_info(movie_code)
+
                 if info:
+                    st.markdown("---")
                     st.markdown("#### 기본 정보")
 
                     if info.get("movieNmEn"):
-                        st.write(f"**영문명:** {info['movieNmEn']}")
+                        st.write(
+                            f"**영문명:** {info['movieNmEn']}"
+                        )
+
                     if info.get("openDt"):
-                        st.write(f"**개봉일:** {info['openDt']}")
+                        st.write(
+                            f"**개봉일:** {info['openDt']}"
+                        )
+
                     if info.get("showTm"):
-                        st.write(f"**상영 시간:** {info['showTm']}분")
+                        st.write(
+                            f"**상영 시간:** {info['showTm']}분"
+                        )
 
                     genres = [
-                        g.get("genreNm", "")
-                        for g in info.get("genres", [])
-                        if g.get("genreNm")
+                        item.get("genreNm", "")
+                        for item in info.get("genres", [])
+                        if item.get("genreNm")
                     ]
+
                     if genres:
-                        st.write(f"**장르:** {', '.join(genres)}")
+                        st.write(
+                            f"**장르:** {', '.join(genres)}"
+                        )
 
                     directors = [
-                        d.get("peopleNm", "")
-                        for d in info.get("directors", [])
-                        if d.get("peopleNm")
+                        item.get("peopleNm", "")
+                        for item in info.get("directors", [])
+                        if item.get("peopleNm")
                     ]
+
                     if directors:
-                        st.write(f"**감독:** {', '.join(directors)}")
+                        st.write(
+                            f"**감독:** {', '.join(directors)}"
+                        )
 
                     actors = [
-                        a.get("peopleNm", "")
-                        for a in info.get("actors", [])[:5]
-                        if a.get("peopleNm")
+                        item.get("peopleNm", "")
+                        for item in info.get("actors", [])[:5]
+                        if item.get("peopleNm")
                     ]
-                    if actors:
-                        st.write(f"**출연:** {', '.join(actors)}")
-            except Exception as exc:
-                st.warning(f"추가 영화 정보를 불러오지 못했습니다: {exc}")
 
+                    if actors:
+                        st.write(
+                            f"**출연:** {', '.join(actors)}"
+                        )
+
+                else:
+                    st.info("추가 영화 정보가 없습니다.")
+
+            except Exception as exc:
+                st.warning(
+                    f"추가 영화 정보를 불러오지 못했습니다: {exc}"
+                )
+
+    # ----------------------------------------------
+    # 오른쪽: 해당 영화의 관객 추이
+    # ----------------------------------------------
     with graph_col:
         with st.container(border=True):
             st.subheader("📈 관객 추이")
 
             period = st.radio(
-                "그래프 기간 선택",
+                "그래프 기간",
                 ["일간", "주간", "월간"],
                 horizontal=True,
-                key="detail_period",
+                key=f"graph_period_{movie_code}",
             )
 
             end_text = selected_date.isoformat()
 
             try:
                 if period == "일간":
-                    with st.spinner("최근 30일 자료를 불러오는 중..."):
+                    with st.spinner(
+                        "최근 30일 관객 데이터를 불러오는 중..."
+                    ):
                         df = get_daily_history(
-                            movie_code, end_text, release_text
+                            movie_code,
+                            end_text,
+                            release_text,
                         )
 
                     if df.empty:
-                        st.info("최근 30일의 일별 TOP 10 자료에서 관객 추이를 찾지 못했습니다.")
+                        st.info(
+                            "최근 30일의 일별 TOP 10 자료에서 "
+                            "이 영화의 관객 추이를 찾지 못했습니다."
+                        )
                     else:
-                        draw_line_chart(df, "날짜", "최근 30일 일별 관객 수")
+                        draw_line_chart(
+                            df,
+                            "날짜",
+                            "최근 30일 일별 관객 수",
+                        )
 
                 else:
-                    with st.spinner("주간 자료를 불러오는 중..."):
+                    with st.spinner(
+                        "주간 관객 데이터를 불러오는 중..."
+                    ):
                         weekly = get_weekly_history(
-                            movie_code, end_text, release_text
+                            movie_code,
+                            end_text,
+                            release_text,
                         )
 
                     if period == "주간":
                         if weekly.empty:
-                            st.info("주간 TOP 10 자료에서 관객 추이를 찾지 못했습니다.")
+                            st.info(
+                                "주간 TOP 10 자료에서 관객 추이를 "
+                                "찾지 못했습니다."
+                            )
                         else:
-                            draw_line_chart(weekly, "날짜", "주간 관객 수")
+                            draw_line_chart(
+                                weekly,
+                                "날짜",
+                                "주간 관객 수",
+                            )
+
                     else:
                         if weekly.empty:
-                            st.info("월별 그래프를 만들 자료가 없습니다.")
+                            st.info(
+                                "월별 그래프를 만들 자료가 없습니다."
+                            )
                         else:
                             monthly = weekly.copy()
-                            monthly["월"] = pd.to_datetime(
-                                monthly["날짜"]
-                            ).dt.to_period("M").astype(str)
+
+                            monthly["월"] = (
+                                pd.to_datetime(monthly["날짜"])
+                                .dt.to_period("M")
+                                .astype(str)
+                            )
+
                             monthly = (
-                                monthly.groupby("월", as_index=False)["관객 수"]
+                                monthly.groupby(
+                                    "월",
+                                    as_index=False,
+                                )["관객 수"]
                                 .sum()
                                 .rename(columns={"월": "기간"})
                             )
-                            draw_line_chart(monthly, "기간", "월별 관객 수")
+
+                            draw_line_chart(
+                                monthly,
+                                "기간",
+                                "월별 관객 수",
+                            )
+
                             st.caption(
                                 "월별 수치는 공식 월간 자료가 아니라 "
-                                "조회 가능한 주간 TOP 10 관객 수를 합산한 참고값입니다."
+                                "조회 가능한 주간 TOP 10 관객 수를 "
+                                "합산한 참고값입니다."
                             )
 
             except Exception as exc:
-                st.warning(f"그래프를 불러오지 못했습니다: {exc}")
+                st.warning(
+                    f"그래프를 불러오지 못했습니다: {exc}"
+                )
 
             st.caption(
-                "KOBIS 일별·주별 자료는 TOP 10까지만 제공되므로 "
-                "순위 밖 기간의 관객 수는 그래프에 포함되지 않을 수 있습니다."
+                "KOBIS 일별·주별 박스오피스는 TOP 10까지만 "
+                "제공하므로, 순위 밖 기간의 관객 수는 "
+                "그래프에 포함되지 않을 수 있습니다."
             )
 
 
-# --------------------------------------------------
-# 박스오피스 목록 화면
-# --------------------------------------------------
+# ==================================================
+# 13. 박스오피스 목록 화면
+# ==================================================
 def show_list():
     st.title("🎬 어제의 박스오피스")
     st.caption("영화진흥위원회(KOBIS) 공식 자료")
@@ -476,15 +731,22 @@ def show_list():
         max_value=YESTERDAY,
     )
 
+    selected_date_text = selected_date.isoformat()
+
     try:
-        with st.spinner("박스오피스 데이터를 불러오는 중..."):
-            movies = get_daily_boxoffice(selected_date.isoformat())
+        with st.spinner("박스오피스를 불러오는 중..."):
+            movies = get_daily_boxoffice(
+                selected_date_text
+            )
+
     except Exception as exc:
         st.error("박스오피스 데이터를 불러오지 못했습니다.")
         st.warning(str(exc))
+
         st.info(
-            'Streamlit Cloud의 Settings → Secrets에서 '
-            'KOBIS_KEY = "발급받은_API_키"가 설정되어 있는지 확인해 주세요.'
+            'Streamlit Cloud → Settings → Secrets에서 '
+            'KOBIS_KEY = "발급받은_API_키"가 설정되어 있는지 '
+            "확인해 주세요."
         )
         return
 
@@ -492,21 +754,37 @@ def show_list():
         st.info("그날은 아직 집계 전입니다")
         return
 
-    first = movies[0]
-    m1, m2, m3 = st.columns(3)
-    m1.metric("🥇 1위 영화", first.get("movieNm", "-"))
-    m2.metric("오늘 관객 수", f"{number(first.get('audiCnt'))}명")
-    m3.metric("누적 관객 수", f"{number(first.get('audiAcc'))}명")
+    # ----------------------------------------------
+    # 1위 영화 요약
+    # ----------------------------------------------
+    first_movie = movies[0]
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric(
+        "🥇 1위 영화",
+        first_movie.get("movieNm", "-"),
+    )
+
+    col2.metric(
+        "오늘 관객 수",
+        f"{number(first_movie.get('audiCnt'))}명",
+    )
+
+    col3.metric(
+        "누적 관객 수",
+        f"{number(first_movie.get('audiAcc'))}명",
+    )
 
     st.markdown("---")
     st.subheader("📊 관객 수 TOP 5")
 
     top5 = pd.DataFrame([
         {
-            "영화명": m.get("movieNm", ""),
-            "관객 수": int_value(m.get("audiCnt")),
+            "영화명": item.get("movieNm", ""),
+            "관객 수": int_value(item.get("audiCnt")),
         }
-        for m in movies[:5]
+        for item in movies[:5]
     ])
 
     fig = px.bar(
@@ -516,84 +794,124 @@ def show_list():
         orientation="h",
         text="관객 수",
     )
+
     fig.update_traces(
         marker_color="#80bfff",
         texttemplate="%{text:,}",
         textposition="outside",
         cliponaxis=False,
     )
+
     fig.update_layout(
         paper_bgcolor="#172b49",
         plot_bgcolor="#172b49",
         font_color="#ffffff",
         yaxis=dict(autorange="reversed"),
-        margin=dict(l=10, r=45, t=20, b=10),
+        margin=dict(l=10, r=45, t=25, b=10),
     )
-    st.plotly_chart(fig, use_container_width=True)
 
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+    )
+
+    # ----------------------------------------------
+    # 전체 영화 목록
+    # ----------------------------------------------
     st.markdown("---")
     st.subheader("🏆 전체 순위")
-    st.caption("순위 또는 영화명을 누르면 해당 영화의 상세 화면으로 이동합니다.")
 
-    for i, movie in enumerate(movies):
-        rank = int_value(movie.get("rank"))
-        change = int_value(movie.get("rankInten"))
-        title = str(movie.get("movieNm", "이름 미상"))
-        trophy = " 🏆" if int_value(movie.get("audiAcc")) > 1_000_000 else ""
+    st.caption(
+        "순위 또는 영화명을 누르면 해당 영화의 상세 화면으로 이동합니다."
+    )
 
-        if change > 0:
-            change_label = f"🔺 +{change}"
-        elif change < 0:
-            change_label = f"🔵 {change}"
+    for index, movie in enumerate(movies):
+        # 각 반복마다 독립된 영화 사본 생성
+        movie_data = dict(movie)
+        movie_code = str(movie_data.get("movieCd", ""))
+        movie_name = str(movie_data.get("movieNm", "이름 미상"))
+
+        rank = int_value(movie_data.get("rank"))
+        rank_change = int_value(movie_data.get("rankInten"))
+
+        trophy = (
+            " 🏆"
+            if int_value(movie_data.get("audiAcc")) > 1_000_000
+            else ""
+        )
+
+        if rank_change > 0:
+            change_label = f"🔺 +{rank_change}"
+        elif rank_change < 0:
+            change_label = f"🔵 {rank_change}"
         else:
             change_label = "➖ 0"
+
+        # 중요:
+        # 클릭 시 현재 반복의 영화 사본과 날짜를 콜백에 직접 전달
+        callback_args = (
+            movie_data,
+            selected_date_text,
+        )
 
         with st.container(border=True):
             c1, c2, c3, c4, c5, c6, c7 = st.columns(
                 [0.55, 0.7, 2.3, 0.85, 1.05, 1.05, 0.8]
             )
 
-            def select_movie():
-                st.session_state["selected_movie"] = movie
-                st.session_state["selected_date"] = selected_date.isoformat()
-                st.session_state["page"] = "detail"
-
             with c1:
                 st.button(
                     f"{rank}위",
-                    key=f"rank_{selected_date}_{i}_{movie.get('movieCd')}",
-                    on_click=select_movie,
+                    key=(
+                        f"rank_{selected_date_text}_"
+                        f"{index}_{movie_code}"
+                    ),
+                    on_click=open_movie_detail,
+                    args=callback_args,
                     use_container_width=True,
                 )
+
             with c2:
                 st.write(change_label)
+
             with c3:
                 st.button(
-                    f"{title}{trophy}",
-                    key=f"title_{selected_date}_{i}_{movie.get('movieCd')}",
-                    on_click=select_movie,
+                    f"{movie_name}{trophy}",
+                    key=(
+                        f"title_{selected_date_text}_"
+                        f"{index}_{movie_code}"
+                    ),
+                    on_click=open_movie_detail,
+                    args=callback_args,
                     use_container_width=True,
                 )
+
             with c4:
-                st.write(movie.get("openDt") or "-")
+                st.write(movie_data.get("openDt") or "-")
+
             with c5:
-                st.write(number(movie.get("audiCnt")))
+                st.write(number(movie_data.get("audiCnt")))
+
             with c6:
-                st.write(number(movie.get("audiAcc")))
+                st.write(number(movie_data.get("audiAcc")))
+
             with c7:
-                st.write(number(movie.get("scrnCnt")))
+                st.write(number(movie_data.get("scrnCnt")))
 
 
-# --------------------------------------------------
-# 앱 진입점
-# --------------------------------------------------
+# ==================================================
+# 14. 앱 실행
+# ==================================================
 def main():
     if "page" not in st.session_state:
         st.session_state["page"] = "list"
 
     if st.session_state["page"] == "detail":
         movie = st.session_state.get("selected_movie")
-        date_text = st.session_state.get("selected_date", YESTERDAY.isoformat())
+        date_text = st.session_state.get(
+            "selected_date",
+            YESTERDAY.isoformat(),
+        )
 
         if not movie:
             st.session_state["page"] = "list"
@@ -601,11 +919,15 @@ def main():
             return
 
         try:
-            selected_date = datetime.strptime(date_text, "%Y-%m-%d").date()
-        except ValueError:
+            selected_date = datetime.strptime(
+                date_text,
+                "%Y-%m-%d",
+            ).date()
+        except (ValueError, TypeError):
             selected_date = YESTERDAY
 
         show_detail(movie, selected_date)
+
     else:
         show_list()
 
